@@ -1,33 +1,35 @@
 #!/usr/bin/env python
 """
-This is a hangman game that uses the random-word-api.herokuapp.com API to get a random word. 
-Then uses multiple threads to get the definition from the word.
+We use the random-word-api.herokuapp.com to get a random word.
+Then uses async methods to get the definition from the word.
 
 Author: Cédric Skwar
 E-mail: cdrc+hangman@skwar.me
 """
-# TODO: make that while the threads get the definition, you can still enter a guess
-from multiprocessing.dummy import Pool as ThreadPool
-# pretty print
-from pprint import pprint
-
-from sys import exit
-
-import requests
+# from sys import exit
+import asyncio
+import aiohttp
 import yaml
-
+# import the random word from the helper file
 import random_word_file
 
 
 class Hangman:
+    """
+    This class is the hangman game.
+
+    :return: None
+    """
 
     def __init__(self):
+        """:return: None"""
         # make a running boolean that starts as 1
-        self.running = 1
+        self.session = None
+        self.running = True
         self.cycle = 0
         # self.word = self._random_word_fn()
         self.word = random_word_file.random_word_fn()
-        # self.word = "fubar"
+        self.word = "word"
         print("word:", self.word)
         # add the word to the list of words
         self.word_list = [self.word]
@@ -40,13 +42,12 @@ class Hangman:
         self.unguessed_letters = "abcdefghijklmnopqrstuvwxyz"
         # replace only the letters that are in the alphabet with "_"
 
-        self.underscores = []
+        self.underscore = []
         for i in range(len(self.word)):
-            self.underscores.append(self._get_replacement_char(self.word[i]))
+            self.underscore.append(self._get_replacement_char(self.letters[i]))
 
-        # ask the user to input a letter and append it to the guessed letters list
+        # Define the self .guess variable
         self.guess = ''
-        self.wrong_letters = []
 
         # load yaml file
         with open("hangman.yml", "r") as stream:
@@ -55,70 +56,46 @@ class Hangman:
             except yaml.YAMLError as exc:
                 print("Error in yaml file:" + exc)
 
-        self.pool = ThreadPool(4)
+        self.loop = asyncio.get_event_loop()
 
-        # hangman.definitions = hangman._get_definitions(hangman.word)
-        self.definitions = self._get_definitions(self.word)
+        self.definitions = []
 
-    def _get_definition_from_lingua_api(self, word):
+    async def _get_request(self, method, url, headers):
+        """:return: status_code, json"""
+        async with self.session.request(method, url, headers=headers) as response:
+            # return await (response.status_code, response.json())
+            json = await response.json()
+            status = response.status
+            return status, json
+
+    async def _get_def_lingua_api(self, word):
         url = "https://lingua-robot.p.rapidapi.com/language/v1/entries/en/" + word
         headers = {
             'x-rapidapi-host': self.cfg["apis"]["linguarobot"]["host"],
             'x-rapidapi-key': self.cfg["apis"]["linguarobot"]["apikey"]
         }
-        response = requests.request("GET", url, headers=headers)
-        if response.json()['entries']:
-            definition = response.json(
-            )["entries"][0]["lexemes"][0]["senses"][0]["definition"]
+        status_code, json = await self._get_request(method="GET", url=url, headers=headers)
+
+        if json['entries']:
+            definition = json["entries"][0]["lexemes"][0]["senses"][0]["definition"]
         else:
             definition = False
         return definition
 
-    def _get_definition_from_words_api(self, word):
+    async def _get_definition_from_words_api(self, word):
         url = "https://wordsapiv1.p.rapidapi.com/words/" + word + "/definitions"
         headers = {
             'x-rapidapi-host': self.cfg["apis"]["wordsapi"]["host"],
             'x-rapidapi-key': self.cfg["apis"]["wordsapi"]["apikey"]
         }
-        response = requests.request("GET", url, headers=headers)
+        status_code, json = await self._get_request(method="GET", url=url, headers=headers)
 
-        if 'success' in response.json():
-            definition = False
-        else:
-            if response.json()["definitions"]:
-                definition = response.json()["definitions"][0]["definition"]
-            else:
-                definition = False
+        if 'success' not in json and json["definitions"]:
+            return json["definitions"][0]["definition"]
+        return None
 
-        # if response.json()['success']:
-        #     definition = response.json()["definitions"][0]["definition"]
-        # else:
-        #     definition = False
-
-        return definition
-
-    def _get_definition_from_dictionary_api(self, word):
-        url = "https://dictionaryapi.dev/api/v2/entries/en/" + word
-        response = requests.get(url)
-        if response.status_code == requests.codes.ok:
-            definition = response.json(
-            )[0]["meanings"][0]["definitions"][0]["definition"]
-        else:
-            definition = False
-        return definition
-
-    def _get_definition_from_one_api(self, func):
-        defintion = func(self.word)
-        return defintion
-
-    def _get_definitions(self, word):
-        funcs = [self._get_definition_from_words_api,
-                 self._get_definition_from_lingua_api,
-                 self._get_definition_from_dictionary_api]
-
-        defis = self.pool.map(self._get_definition_from_one_api, funcs)
-
-    def _get_replacement_char(self, c):
+    @staticmethod
+    def _get_replacement_char(c):
         if c.isalpha():
             return '_'
         else:
@@ -126,9 +103,19 @@ class Hangman:
 
     def ask_letter(self):
         # ask the user to input a letter and convert the input to lowercase and to the first letter
-        self.guess = input("Guess a letter: ").lower()[0]
+        # check if the input is "" or " "
+        # if it is, ask the user to input a letter again
+        # if it is not, append the letter to the self.guess
+        while True:
+            self.guess = input("Guess a letter: ").lower()
+            if self.guess in ['', ' ']:
+                print("You must guess a letter!")
+            else:
+                break
 
     def check_letter(self):
+        # In this function, we check if the letter is in the word
+        self.guess = self.guess[0]
         # remove the guessed letter in unguessed letters
         self.unguessed_letters = self.unguessed_letters.replace(
             self.guess, " ")
@@ -144,23 +131,28 @@ class Hangman:
                 # print a message saying the letter is in the word
                 print("The letter is in the word")
                 # for each letter in the word
-                for i in range(len(self.letters)):
+                # for i in range(len(self.letters)):
+                for i, n in enumerate(self.letters):
                     # if the letter is in the word
                     if self.guess == self.letters[i]:
                         # replace the underscore with the letter
-                        self.underscores[i] = self.guess
-            # if the letter is not in the word
+                        self.underscore[i] = self.guess
+            elif self.guess == "\\":
+                print("\\ is not allowed")
+            elif self.guess == "^":
+                print("^ is not allowed")
+            elif self.guess in ["F1", "F2", "F3", "F4", "F5",
+                                "F6", "F7", "F8", "F9", "F10", "F11", "F12"]:
+                print("F1-F12 is not allowed")
             else:
-                # print Sorry the" letter "is not in the word."
+                # print Sorry the " letter "is not in the word."
                 print("Sorry the letter " + self.guess + " is not in the word.")
                 # add one to the cycle
                 self.cycle += 1
-                # add the letter to the wrong letters list
-                self.wrong_letters.append(self.guess)
 
     def check_win(self):
         # if "_" not in self.underscores print "you win" and ask if user wants to play again
-        if "_" not in self.underscores:
+        if "_" not in self.underscore:
             print("you win")
             self.play_again()
 
@@ -178,19 +170,20 @@ class Hangman:
             # print the definition of the word
             print("The word was: " + self.word)
             # print the definition of the word
-            pprint(self.definitions)
-
-            # exit the program
+            print("Linguarobot definition: " + self.definitions[0])
+            print("WordsAPI definition: " + self.definitions[1])
+            # ask again
             self.play_again()
         else:
-            # print goodbye
-            print("goodbye")
-            # set the running boolean to 0
-            self.running = 0
+            # Print a nice goodbye message
+            print("Goodbye and have a nice day!")
+            # set the running boolean to False
+            self.running = False
             # exit the game
             exit()
 
         # if the cycle is greater than the length of the word
+
     # draw the hangman
     def draw_hangman(self):
         # if the cycle is 0
@@ -239,7 +232,7 @@ class Hangman:
             print("  _________     ")
             print(" |         |    ")
             print(" |         O    ")
-            print(" |        /|\   ")
+            print(" |        /|\\   ")
             print(" |              ")
             print(" |              ")
             print("_|___           ")
@@ -249,7 +242,7 @@ class Hangman:
             print("  _________     ")
             print(" |         |    ")
             print(" |         O    ")
-            print(" |        /|\   ")
+            print(" |        /|\\   ")
             print(" |        /     ")
             print(" |              ")
             print("_|___           ")
@@ -259,8 +252,8 @@ class Hangman:
             print("  _________     ")
             print(" |         |    ")
             print(" |         O    ")
-            print(" |        /|\   ")
-            print(" |        / \   ")
+            print(" |        /|\\   ")
+            print(" |        / \\   ")
             print(" |              ")
             print("_|___           ")
         # print "you lose" and ask if the user wants to play again
@@ -269,18 +262,31 @@ class Hangman:
             print("You lost.\n The word was: " + self.word)
             self.play_again()
 
+    async def play(self):
+        self.session = aiohttp.ClientSession(loop=self.loop)
+
+        lingua_api_returned = await self._get_def_lingua_api(self.word)
+        # print("lingua_api_returned: " + str(lingua_api_returned))
+
+        words_api_returned = await self._get_definition_from_words_api(self.word)
+        # print("words_api_returned: " + str(words_api_returned))
+
+        self.definitions = [lingua_api_returned, words_api_returned]
+
+        await self.session.close()
+
+        while self.running:
+            self.draw_hangman()
+            print("The word is: " + "".join(self.underscore) +
+                  " (Length: " + str(len(self.word)) + ")")
+            print("Remaining letters: " + self.unguessed_letters)
+            self.ask_letter()
+            self.check_letter()
+            self.check_win()
+
 
 if __name__ == '__main__':
     # call the Hangman class
     hangman = Hangman()
-    hangman.definitions = hangman._get_definitions(hangman.word)
-
-    # while the running boolean is true
-    while hangman.running:
-        hangman.draw_hangman()
-        print("The word is: " + "".join(hangman.underscores) +
-              " (Length: " + str(len(hangman.word)) + ")")
-        print("Remaining letters: " + hangman.unguessed_letters)
-        hangman.ask_letter()
-        hangman.check_letter()
-        hangman.check_win()
+    # call the play method
+    hangman.loop.run_until_complete(hangman.play())
