@@ -1,6 +1,6 @@
 # Hangman
 ## Overview
-This is an hangman game that generates a random word. Then it get multithreaded so that the definitons already get ready and a showcase of GitHub Copilot.
+This is an hangman game that generates a random word. Then it gets async so that the definitons already get ready and a showcase of GitHub Copilot.
 ## API keys
 To get the used APIs go to: 
 1. [Wordsapi](https://rapidapi.com/dpventures/api/wordsapi/) and register with a free account.
