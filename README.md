@@ -16,3 +16,6 @@ apis:
     apikey: {your-key}
     host: {your-host}
 ```
+## Hot wo use
+- You change the perms for `hangman.py` with `chmod +x hangman.py` and then you can run `./hangman.py`.
+- You can run `python3 hangman.py`
