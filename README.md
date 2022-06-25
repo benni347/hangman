@@ -17,5 +17,6 @@ apis:
     host: {your-host}
 ```
 ## How to use
+- Install the dependencies: `pip install -r requirements.txt`
 - You change the perms for `hangman.py` with `chmod +x hangman.py` and then you can run `./hangman.py`.
 - You can run `python3 hangman.py`
